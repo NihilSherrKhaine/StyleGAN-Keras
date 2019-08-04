@@ -1,31 +1,27 @@
-#Imports
 from PIL import Image
 from math import floor
 import numpy as np
 import time
 from functools import partial
-from random import random
 
-#Config Stuff
+from keras.layers import Conv2D, Dense, AveragePooling2D, LeakyReLU, Activation
+from keras.layers import Reshape, UpSampling2D, Dropout, Flatten, Input, add, Cropping2D
+from keras.models import model_from_json, Model
+from keras.optimizers import Adam
+from keras.preprocessing.image import ImageDataGenerator
+import keras.backend as K
+from adamlr import Adam_lr_mult
+from AdaIN import AdaInstanceNormalization
+
 im_size = 64
 latent_size = 128
-BATCH_SIZE = 4
-directory = "Dogs"
+BATCH_SIZE = 12
+EPOCHS = 100
+BATCH_PER_EPOCH = 20000
+directory = "Test"
 n_images = 20579
 suff = 'jpg'
 cmode = 'YCbCr'
-
-""" For testing color space ranges
-temp = Image.open("data/Earth/im (2).jpg").convert(cmode)
-temp1 = np.array(temp, dtype='float32')
-
-print(np.max(temp1[...,0]))
-print(np.min(temp1[...,0]))
-print(np.max(temp1[...,1]))
-print(np.min(temp1[...,1]))
-print(np.max(temp1[...,2]))
-print(np.min(temp1[...,2]))
-"""
 
 #Style Z
 def noise(n):
@@ -34,80 +30,6 @@ def noise(n):
 #Noise Sample
 def noiseImage(n):
     return np.random.uniform(0.0, 1.0, size = [n, im_size, im_size, 1])
-
-#Get random samples from an array
-def get_rand(array, amount):
-    
-    idx = np.random.randint(0, array.shape[0], amount)
-    return array[idx]
-
-#Import Images Function
-def import_images(loc, flip = True, suffix = 'jpg'):
-    
-    out = []
-    cont = True
-    i = 1
-    print("Importing Images...")
-    
-    while(cont):
-        try:
-            temp = Image.open("data/"+loc+"/im ("+str(i)+")."+suffix+"").convert(cmode)
-            temp = temp.resize((im_size, im_size), Image.BICUBIC)
-            temp1 = np.array(temp, dtype='float32') / 255
-            out.append(temp1)
-            if flip:
-                out.append(np.flip(out[-1], 1))
-            
-            i = i + 1
-        except:
-            cont = False
-        
-    print(str(i-1) + " images imported.")
-            
-    return np.array(out)
-
-#This is the REAL data generator, which can take images from disk and temporarily use them in your program.
-#Probably could/should get optimized at some point
-
-
-class dataGenerator(object):
-    
-    def __init__(self, loc, n, flip = True, suffix = 'png'):
-        self.loc = "data/"+loc
-        self.flip = flip
-        self.suffix = suffix
-        self.n = n
-    
-    def get_batch(self, amount):
-        
-        idx = np.random.randint(0, self.n - 1, amount) + 1
-        out = []
-        
-        for i in idx:
-            temp = Image.open(self.loc+"/im ("+str(i)+")."+self.suffix+"").convert(cmode)
-            temp1 = np.array(temp, dtype='float32') / 255
-            if self.flip and random() > 0.5:
-                temp1 = np.flip(temp1, 1)
-                
-            out.append(temp1)
-            
-        
-        return np.array(out)
-
-        
-
-
-#Imports for layers and models
-from keras.layers import Conv2D, Dense, AveragePooling2D, LeakyReLU, Activation
-from keras.layers import Reshape, UpSampling2D, Dropout, Flatten, Input, add, Cropping2D
-from keras.models import model_from_json, Model
-from keras.optimizers import Adam
-from keras.preprocessing.image import ImageDataGenerator
-from adamlr import Adam_lr_mult
-import keras.backend as K
-
-from AdaIN import AdaInstanceNormalization
-
 
 #r1/r2 gradient penalty
 def gradient_penalty_loss(y_true, y_pred, averaged_samples, weight):
@@ -473,13 +395,12 @@ class GAN(object):
             inputs[i] = self.S.predict(inputs[i])
             
         return self.G.predict(inputs, batch_size = 4)
-        
-        
-from keras.datasets import cifar10
+
 class WGAN(object):
     
     def __init__(self, steps = 1, lr = 0.0001, decay = 0.00001, silent = True):
-        
+
+        #Model configuration for training stages.
         self.GAN = GAN(steps = steps, lr = lr, decay = decay)
         self.DisModel = self.GAN.DisModel()
         self.AdModel = self.GAN.AdModel()
@@ -488,19 +409,14 @@ class WGAN(object):
         self.generator = self.GAN.generator()
         
         self.lastblip = time.clock()
-        
         self.noise_level = 0
-        
-        #self.ImagesA = import_images(directory, True)
-        #self.im = dataGenerator(directory, n_images, suffix = suff, flip = True)
-        self.datagen = ImageDataGenerator()
-        self.sampler = self.datagen.flow_from_directory('data/' + directory + '/', class_mode=None, batch_size=BATCH_SIZE, target_size=(im_size, im_size))
-        #(self.im, _), (_, _) = cifar10.load_data()
-        #self.im = np.float32(self.im) / 255
-        
         self.silent = silent
 
-        #Train Generator to be in the middle, not all the way at real. Apparently works better??
+        self.datagen = ImageDataGenerator()
+        self.sampler = self.datagen.flow_from_directory('data/' + directory + '/', class_mode=None,
+                                                        batch_size=BATCH_SIZE,
+                                                        target_size=(im_size, im_size))
+
         self.ones = np.ones((BATCH_SIZE, 1), dtype=np.float32)
         self.zeros = np.zeros((BATCH_SIZE, 1), dtype=np.float32)
         self.nones = -self.ones
@@ -511,68 +427,66 @@ class WGAN(object):
         self.t = [[], []]
     
     def train(self):
-        
-        #Train Alternating
-        t1 = time.clock()
-        if self.GAN.steps % 10 <= 5:
-            a = self.train_dis()
-            t2 = time.clock()
-            b = self.train_gen()
-            t3 = time.clock()
-        else:
-            a = self.train_mix_d()
-            t2 = time.clock()
-            b = self.train_mix_g()
-            t3 = time.clock()
-            
-        self.t[0].append(t2-t1)
-        self.t[1].append(t3-t2)
-        
-        #Print info
-        if self.GAN.steps % 20 == 0 and not self.silent:
-            print("\n\nRound " + str(self.GAN.steps) + ":")
-            print("D: " + str(a))
-            print("G: " + str(b))
-            s = round((time.clock() - self.lastblip) * 1000) / 1000
-            print("T: " + str(s) + " sec")
-            self.lastblip = time.clock()
-            
-            if self.GAN.steps % 100 == 0:
-                print("TD: " + str(np.sum(self.t[0])))
-                print("TG: " + str(np.sum(self.t[1])))
-                
-                self.t = [[], []]
-                
-            
-            #Save Model
-            if self.GAN.steps % 500 == 0:
-                self.save(floor(self.GAN.steps / 10000))
-            if self.GAN.steps % 1000 == 0:
-                self.evaluate(floor(self.GAN.steps / 1000))
-                self.evalMix(floor(self.GAN.steps / 1000))
-                self.evalTrunc(floor(self.GAN.steps / 1000))
-            
-        
-        self.GAN.steps = self.GAN.steps + 1
+        for epoch in range(EPOCHS):
+            print(f"{epoch} epoch has began!")
+            batch = 0
+            #self.GAN.steps = self.GAN.steps + 1
+            self.datagen = ImageDataGenerator()
+            self.sampler = self.datagen.flow_from_directory('data/' + directory + '/', class_mode=None,
+                                                            batch_size=BATCH_SIZE,
+                                                            target_size=(im_size, im_size))
+
+            while (batch < BATCH_PER_EPOCH):
+                # Train Alternating
+                t1 = time.clock()
+                if self.GAN.steps % 10 <= 5:
+                    a = self.train_dis()
+                    t2 = time.clock()
+                    b = self.train_gen()
+                    t3 = time.clock()
+                else:
+                    a = self.train_mix_d()
+                    t2 = time.clock()
+                    b = self.train_mix_g()
+                    t3 = time.clock()
+                batch += 1
+                self.t[0].append(t2-t1)
+                self.t[1].append(t3-t2)
+
+                #Print info
+                if not self.silent:
+                    if self.GAN.steps % 250 == 0:
+                        print("\n\nRound " + str(self.GAN.steps) + ":")
+                        print("D: " + str(a))
+                        print("G: " + str(b))
+                        s = round((time.clock() - self.lastblip) * 1000) / 1000
+                        print("T: " + str(s) + " sec")
+                        self.lastblip = time.clock()
+
+                    if self.GAN.steps % 1000 == 0:
+                        print("TD: " + str(np.sum(self.t[0])))
+                        print("TG: " + str(np.sum(self.t[1])))
+                        self.t = [[], []]
+
+                    #Save Model
+                    if self.GAN.steps % 500 == 0:
+                        self.save(floor(self.GAN.steps / 10000))
+                    if self.GAN.steps % 1000 == 0:
+                        self.evaluate(floor(self.GAN.steps / 1000))
+                        self.evalMix(floor(self.GAN.steps / 1000))
+                        self.evalTrunc(floor(self.GAN.steps / 1000))
+
+                self.GAN.steps = self.GAN.steps + 1
           
     def train_dis(self):
-        
-        #Get Data 
-        #self.im.get_batch(BATCH_SIZE)
-        #get_rand(self.im, BATCH_SIZE)
         train_data = [self.sampler.next(), noise(BATCH_SIZE), noiseImage(BATCH_SIZE), self.ones]
-        
-        #Train
         d_loss = self.DisModel.train_on_batch(train_data, [self.ones, self.nones, self.ones])
-        
         return d_loss
     
     def train_mix_d(self):
-        
         threshold = np.int32(np.random.uniform(0.0, self.GAN.style_layers, size = [BATCH_SIZE]))
         n1 = noise(BATCH_SIZE)
         n2 = noise(BATCH_SIZE)
-        
         n = []
         
         for i in range(self.GAN.style_layers):
@@ -585,25 +499,17 @@ class WGAN(object):
             n[i] = np.array(n[i])
         
         images = self.sampler.next()
-        
-        #Train
         d_loss = self.MixModelD.train_on_batch([images] + n + [noiseImage(BATCH_SIZE), self.ones], [self.ones, self.nones, self.ones])
-        
         return d_loss
        
     def train_gen(self):
-        
-        #Train
         g_loss = self.AdModel.train_on_batch([noise(BATCH_SIZE), noiseImage(BATCH_SIZE), self.ones], self.ones)
-        
         return g_loss
     
     def train_mix_g(self):
-        
         threshold = np.int32(np.random.uniform(0.0, self.GAN.style_layers, size = [BATCH_SIZE]))
         n1 = noise(BATCH_SIZE)
         n2 = noise(BATCH_SIZE)
-        
         n = []
         
         for i in range(self.GAN.style_layers):
@@ -614,18 +520,13 @@ class WGAN(object):
                 else:
                     n[i].append(n2[j])
             n[i] = np.array(n[i])
-                    
-        
-        #Train
+
         g_loss = self.MixModel.train_on_batch(n + [noiseImage(BATCH_SIZE), self.ones], self.ones)
-        
         return g_loss
     
     def evaluate(self, num = 0): #8x8 images, bottom row is constant
-        
         n = noise(56)
         n2 = noiseImage(56)
-        
         im = self.GAN.predict(([n] * self.GAN.style_layers) + [n2, np.ones([56, 1])])
         im3 = self.GAN.predict(([self.enoise] * self.GAN.style_layers) + [self.enoiseImage, np.ones([8, 1])])
         
@@ -640,17 +541,13 @@ class WGAN(object):
         r.append(np.concatenate(im3[:8], axis = 1))
         
         c1 = np.concatenate(r, axis = 0)
-        
         x = Image.fromarray(np.uint8(c1*255), mode = cmode)
-        
         x.save("Results/i"+str(num)+"ii.jpg")
         
     
     def evalMix(self, num = 0):
-        
         bn = noise(8)
         sn = noise(8)
-        
         n = []
         for i in range(self.GAN.style_layers):
             n.append([])
@@ -680,7 +577,6 @@ class WGAN(object):
         c = np.concatenate(r, axis = 0)
         
         x = Image.fromarray(np.uint8(c*255), mode = cmode)
-        
         x.save("Results/i"+str(num)+"mm.jpg")
         
     def evalTrunc(self, num = 0, trunc = 2.0, scale = 1, nscale = 0.8, custom_noise = np.array([0])):
@@ -699,7 +595,7 @@ class WGAN(object):
         
         for i in range(n.shape[0]):
             n[i] = np.clip(n[i], mean - (std*trunc), mean + (std * trunc))
-            
+
             if scale != 1:
                 n[i] = (n[i] - mean) * scale + mean
         
