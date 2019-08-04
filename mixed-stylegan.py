@@ -7,11 +7,11 @@ from functools import partial
 from random import random
 
 #Config Stuff
-im_size = 256
-latent_size = 512
+im_size = 64
+latent_size = 128
 BATCH_SIZE = 4
-directory = "Rooms"
-n_images = 2686
+directory = "Dogs"
+n_images = 20579
 suff = 'jpg'
 cmode = 'YCbCr'
 
@@ -42,7 +42,7 @@ def get_rand(array, amount):
     return array[idx]
 
 #Import Images Function
-def import_images(loc, flip = True, suffix = 'png'):
+def import_images(loc, flip = True, suffix = 'jpg'):
     
     out = []
     cont = True
@@ -68,6 +68,8 @@ def import_images(loc, flip = True, suffix = 'png'):
 
 #This is the REAL data generator, which can take images from disk and temporarily use them in your program.
 #Probably could/should get optimized at some point
+
+
 class dataGenerator(object):
     
     def __init__(self, loc, n, flip = True, suffix = 'png'):
@@ -100,6 +102,7 @@ from keras.layers import Conv2D, Dense, AveragePooling2D, LeakyReLU, Activation
 from keras.layers import Reshape, UpSampling2D, Dropout, Flatten, Input, add, Cropping2D
 from keras.models import model_from_json, Model
 from keras.optimizers import Adam
+from keras.preprocessing.image import ImageDataGenerator
 from adamlr import Adam_lr_mult
 import keras.backend as K
 
@@ -240,7 +243,7 @@ class GAN(object):
         inp_s = []
         ss = im_size
         while ss >= 4:
-            inp_s.append(Input(shape = [512]))
+            inp_s.append(Input(shape = [latent_size]))
             ss = int(ss / 2)
         
         self.style_layers = len(inp_s)
@@ -287,13 +290,13 @@ class GAN(object):
         
         #Mapping FC, I only used 5 fully connected layers instead of 8 for faster training
         inp_s = Input(shape = [latent_size])
-        sty = Dense(512, kernel_initializer = 'he_normal', bias_initializer = 'zeros')(inp_s)
+        sty = Dense(latent_size, kernel_initializer = 'he_normal', bias_initializer = 'zeros')(inp_s)
         sty = LeakyReLU(0.01)(sty)
-        sty = Dense(512, kernel_initializer = 'he_normal', bias_initializer = 'zeros')(sty)
+        sty = Dense(latent_size, kernel_initializer = 'he_normal', bias_initializer = 'zeros')(sty)
         sty = LeakyReLU(0.01)(sty)
-        sty = Dense(512, kernel_initializer = 'he_normal', bias_initializer = 'zeros')(sty)
+        sty = Dense(latent_size, kernel_initializer = 'he_normal', bias_initializer = 'zeros')(sty)
         sty = LeakyReLU(0.01)(sty)
-        sty = Dense(512, kernel_initializer = 'he_normal', bias_initializer = 'zeros')(sty)
+        sty = Dense(latent_size, kernel_initializer = 'he_normal', bias_initializer = 'zeros')(sty)
         
         self.S = Model(inputs = inp_s, outputs = sty)
         
@@ -489,7 +492,9 @@ class WGAN(object):
         self.noise_level = 0
         
         #self.ImagesA = import_images(directory, True)
-        self.im = dataGenerator(directory, n_images, suffix = suff, flip = True)
+        #self.im = dataGenerator(directory, n_images, suffix = suff, flip = True)
+        self.datagen = ImageDataGenerator()
+        self.sampler = self.datagen.flow_from_directory('data/' + directory + '/', class_mode=None, batch_size=BATCH_SIZE, target_size=(im_size, im_size))
         #(self.im, _), (_, _) = cifar10.load_data()
         #self.im = np.float32(self.im) / 255
         
@@ -555,7 +560,7 @@ class WGAN(object):
         #Get Data 
         #self.im.get_batch(BATCH_SIZE)
         #get_rand(self.im, BATCH_SIZE)
-        train_data = [self.im.get_batch(BATCH_SIZE), noise(BATCH_SIZE), noiseImage(BATCH_SIZE), self.ones]
+        train_data = [self.sampler.next(), noise(BATCH_SIZE), noiseImage(BATCH_SIZE), self.ones]
         
         #Train
         d_loss = self.DisModel.train_on_batch(train_data, [self.ones, self.nones, self.ones])
@@ -579,7 +584,7 @@ class WGAN(object):
                     n[i].append(n2[j])
             n[i] = np.array(n[i])
         
-        images = self.im.get_batch(BATCH_SIZE)
+        images = self.sampler.next()
         
         #Train
         d_loss = self.MixModelD.train_on_batch([images] + n + [noiseImage(BATCH_SIZE), self.ones], [self.ones, self.nones, self.ones])
@@ -759,8 +764,14 @@ class WGAN(object):
         
 if __name__ == "__main__":
     model = WGAN(lr = 0.0001, silent = False)
-    
+    #model.load(101)
+    #print(model.GAN.G.summary())
+    #print(model.GAN.D.summary())
+    #print(model.GAN.S.summary())
+
+    #for i in range(10):
+    #    model.evalTrunc(i)
     while(True):
-        model.train()
+       model.train()
 
 
