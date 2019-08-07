@@ -16,10 +16,10 @@ from AdaIN import AdaInstanceNormalization
 im_size = 64
 latent_size = 128
 BATCH_SIZE = 12
-EPOCHS = 100
-BATCH_PER_EPOCH = 20000
-directory = "Test"
-n_images = 20579
+EPOCHS = 100000
+DIRECTORY = "Dogs"
+NUM_IMAGES = 20579
+BATCH_PER_EPOCH = int(NUM_IMAGES / BATCH_SIZE)
 suff = 'jpg'
 cmode = 'YCbCr'
 
@@ -413,7 +413,7 @@ class WGAN(object):
         self.silent = silent
 
         self.datagen = ImageDataGenerator()
-        self.sampler = self.datagen.flow_from_directory('data/' + directory + '/', class_mode=None,
+        self.sampler = self.datagen.flow_from_directory('data/' + DIRECTORY + '/', class_mode=None,
                                                         batch_size=BATCH_SIZE,
                                                         target_size=(im_size, im_size))
 
@@ -432,7 +432,7 @@ class WGAN(object):
             batch = 0
             #self.GAN.steps = self.GAN.steps + 1
             self.datagen = ImageDataGenerator()
-            self.sampler = self.datagen.flow_from_directory('data/' + directory + '/', class_mode=None,
+            self.sampler = self.datagen.flow_from_directory('data/' + DIRECTORY + '/', class_mode=None,
                                                             batch_size=BATCH_SIZE,
                                                             target_size=(im_size, im_size))
 
